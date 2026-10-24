@@ -29,7 +29,10 @@ pub(crate) static PROFILER: Lazy<RwLock<Result<Profiler>>> =
     Lazy::new(|| RwLock::new(Profiler::new()));
 
 pub struct Profiler {
-    pub(crate) data: Collector<UnresolvedFrames>,
+    /// The samples of the running profile. `None` while no profile is running: the collector's hash table is
+    /// `BUCKETS * BUCKETS_ASSOCIATIVITY` entries of `MAX_DEPTH` frames (tens of MiB), so it is allocated when a
+    /// profile starts and freed when it stops instead of living in this static for the life of the process.
+    pub(crate) data: Option<Collector<UnresolvedFrames>>,
     sample_counter: i32,
 
     running: bool,
@@ -385,7 +388,7 @@ extern "C" fn perf_signal_handler(
 impl Profiler {
     fn new() -> Result<Self> {
         Ok(Profiler {
-            data: Collector::new()?,
+            data: None,
             sample_counter: 0,
             running: false,
 
@@ -421,6 +424,7 @@ impl Profiler {
         if self.running {
             Err(Error::Running)
         } else {
+            self.data = Some(Collector::new()?);
             self.register_signal_handler()?;
             self.running = true;
 
@@ -430,7 +434,7 @@ impl Profiler {
 
     fn init(&mut self) -> Result<()> {
         self.sample_counter = 0;
-        self.data = Collector::new()?;
+        self.data = None;
         self.running = false;
 
         Ok(())
@@ -480,6 +484,29 @@ impl Profiler {
         let frames = UnresolvedFrames::new(backtrace, thread_name, thread_id, sample_timestamp);
         self.sample_counter += 1;
 
-        if let Ok(()) = self.data.add(frames, 1) {}
+        if let Some(data) = self.data.as_mut() {
+            if let Ok(()) = data.add(frames, 1) {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod collector_lifetime_tests {
+    use super::*;
+
+    fn collector_allocated() -> bool {
+        PROFILER.read().as_ref().map(|p| p.data.is_some()).unwrap_or(false)
+    }
+
+    // The only test in the crate that starts the profiler, so nothing else holds it while this runs.
+    #[test]
+    fn collector_is_allocated_only_while_profiling() {
+        assert!(!collector_allocated(), "no collector before a profile starts");
+        let guard = ProfilerGuardBuilder::default().frequency(99).build().unwrap();
+        assert!(collector_allocated(), "a running profile has its collector");
+        let report = guard.report().build().unwrap();
+        drop(report);
+        drop(guard);
+        assert!(!collector_allocated(), "stopping the profile frees the collector");
     }
 }

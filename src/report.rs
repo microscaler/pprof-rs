@@ -69,25 +69,28 @@ impl<'a> ReportBuilder<'a> {
                 Err(Error::CreatingError)
             }
             Ok(profiler) => {
-                profiler.data.try_iter()?.for_each(|entry| {
-                    let count = entry.count;
-                    if count > 0 {
-                        let key = &entry.item;
-                        match hash_map.get_mut(key) {
-                            Some(value) => {
-                                *value += count;
-                            }
-                            None => {
-                                match hash_map.insert(key.clone(), count) {
-                                    None => {}
-                                    Some(_) => {
-                                        unreachable!();
-                                    }
-                                };
+                profiler.data.iter().try_for_each(|data| -> Result<()> {
+                    data.try_iter()?.for_each(|entry| {
+                        let count = entry.count;
+                        if count > 0 {
+                            let key = &entry.item;
+                            match hash_map.get_mut(key) {
+                                Some(value) => {
+                                    *value += count;
+                                }
+                                None => {
+                                    match hash_map.insert(key.clone(), count) {
+                                        None => {}
+                                        Some(_) => {
+                                            unreachable!();
+                                        }
+                                    };
+                                }
                             }
                         }
-                    }
-                });
+                    });
+                    Ok(())
+                })?;
 
                 Ok(UnresolvedReport {
                     data: hash_map,
@@ -107,29 +110,32 @@ impl<'a> ReportBuilder<'a> {
                 Err(Error::CreatingError)
             }
             Ok(profiler) => {
-                profiler.data.try_iter()?.for_each(|entry| {
-                    let count = entry.count;
-                    if count > 0 {
-                        let mut key = Frames::from(entry.item.clone());
-                        if let Some(processor) = &self.frames_post_processor {
-                            processor(&mut key);
-                        }
+                profiler.data.iter().try_for_each(|data| -> Result<()> {
+                    data.try_iter()?.for_each(|entry| {
+                        let count = entry.count;
+                        if count > 0 {
+                            let mut key = Frames::from(entry.item.clone());
+                            if let Some(processor) = &self.frames_post_processor {
+                                processor(&mut key);
+                            }
 
-                        match hash_map.get_mut(&key) {
-                            Some(value) => {
-                                *value += count;
-                            }
-                            None => {
-                                match hash_map.insert(key, count) {
-                                    None => {}
-                                    Some(_) => {
-                                        unreachable!();
-                                    }
-                                };
+                            match hash_map.get_mut(&key) {
+                                Some(value) => {
+                                    *value += count;
+                                }
+                                None => {
+                                    match hash_map.insert(key, count) {
+                                        None => {}
+                                        Some(_) => {
+                                            unreachable!();
+                                        }
+                                    };
+                                }
                             }
                         }
-                    }
-                });
+                    });
+                    Ok(())
+                })?;
 
                 Ok(Report {
                     data: hash_map,
